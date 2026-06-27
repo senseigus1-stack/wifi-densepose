@@ -192,7 +192,7 @@ for pkg in packages:
     echo "============================================"
     echo "  🚀 Для запуска проекта:"
     echo "    source venv/bin/activate"
-    echo "    python main.py"
+    echo "    python -m src.main"
     echo "============================================"
 }
 

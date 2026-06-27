@@ -1,59 +1,59 @@
-# main.py
-import queue
-import time
+import asyncio
 import logging
 import signal
 import sys
+from src.config import config
+from src.csi_server import CSIServer
+from src.signal_processor import SignalProcessor
+from src.pose_estimator import PoseEstimator
+from src.visualizer import Visualizer
 
-from csi_server import CSIServer
-from signal_processor import SignalProcessor
-from pose_estimator import PoseEstimator
-from visualizer import Visualizer
+# Настройка логирования
+logging.basicConfig(
+    level=getattr(logging, config.log_level),
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Очереди
-raw_csi_queue = queue.Queue()
-processed_queue = queue.Queue()
-pose_queue = queue.Queue()
-
-def signal_handler(sig, frame):
-    logging.info("Получен сигнал завершения...")
-    sys.exit(0)
-
-def main():
-    signal.signal(signal.SIGINT, signal_handler)
-
-    logging.info("=" * 50)
-    logging.info("🚀 WiFi DensePose — Multi-Person Real-time")
-    logging.info("=" * 50)
-
-    # Создаём компоненты
-    csi_server = CSIServer(raw_csi_queue)
-    signal_processor = SignalProcessor(raw_csi_queue, processed_queue)
-    pose_estimator = PoseEstimator(processed_queue, pose_queue)
-    visualizer = Visualizer(pose_queue)
-
-    # Запускаем
-    csi_server.start()
-    signal_processor.start()
-    pose_estimator.start()
-    visualizer.start()
-
-    logging.info("✅ Все компоненты запущены. Нажмите Ctrl+C для выхода.")
-
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        logging.info("Останавливаем компоненты...")
-        csi_server.stop()
-        signal_processor.stop()
-        pose_estimator.stop()
-        visualizer.stop()
-        logging.info("Программа завершена.")
-
+class App:
+    def __init__(self):
+        self.signal_proc = SignalProcessor()
+        self.pose_est = PoseEstimator()
+        self.visualizer = Visualizer()
+        self._running = True
+        
+    async def handle_csi_data(self, raw_data: dict):
+        """Callback для CSI-сервера."""
+        tensor = self.signal_proc.process(raw_data)
+        if tensor is not None:
+            poses = self.pose_est.predict(tensor)
+            presence = self.signal_proc.presence
+            self.visualizer.update(poses, presence)
+            
+    async def run(self):
+        server = CSIServer(self.handle_csi_data)
+        await server.start()
+        logger.info("Application started")
+        
+        # Обработка завершения
+        def shutdown():
+            self._running = False
+            logger.info("Shutdown signal received")
+            
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, shutdown)
+            
+        while self._running:
+            await asyncio.sleep(0.1)
+            
+        await server.stop()
+        self.visualizer.close()
+        logger.info("Application stopped")
+        
 if __name__ == "__main__":
-    main()
+    app = App()
+    try:
+        asyncio.run(app.run())
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")

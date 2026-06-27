@@ -19,4 +19,4 @@ RUN mkdir -p models && \
 
 EXPOSE 5566/udp 3000
 
-CMD ["python", "main.py"]
+CMD ["python", "-m", "src.main"]

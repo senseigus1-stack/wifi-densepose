@@ -1,52 +1,46 @@
-# csi_server.py
-import socket
+import asyncio
 import json
-import threading
-import queue
 import logging
-from config import UDP_IP, UDP_PORT
+from typing import Callable, Awaitable
+from .config import config
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 class CSIServer:
-    """UDP сервер для приёма CSI-данных с ESP32-S3."""
+    """Асинхронный UDP-сервер для приёма CSI-данных с ESP32-S3."""
+    
+    def __init__(self, callback: Callable[[dict], Awaitable[None]]):
+        self.callback = callback
+        self.transport = None
+        self.protocol = None
+        self._running = False
+        
+    async def start(self):
+        """Запуск сервера."""
+        loop = asyncio.get_running_loop()
+        self.transport, self.protocol = await loop.create_datagram_endpoint(
+            lambda: CSIProtocol(self.callback),
+            local_addr=(config.udp_ip, config.udp_port)
+        )
+        self._running = True
+        logger.info(f"UDP server started on {config.udp_ip}:{config.udp_port}")
+        
+    async def stop(self):
+        """Остановка сервера."""
+        if self.transport:
+            self.transport.close()
+        self._running = False
+        logger.info("UDP server stopped")
 
-    def __init__(self, data_queue: queue.Queue):
-        self.data_queue = data_queue
-        self.running = False
-        self.sock = None
-        self.thread = None
-
-    def start(self):
-        if self.running:
-            return
-        self.running = True
-        self.thread = threading.Thread(target=self._run, daemon=True)
-        self.thread.start()
-        logging.info(f"UDP CSI сервер запущен на {UDP_IP}:{UDP_PORT}")
-
-    def _run(self):
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.bind((UDP_IP, UDP_PORT))
-        self.sock.settimeout(1.0)
-
-        while self.running:
-            try:
-                data, addr = self.sock.recvfrom(65535)
-                csi_data = json.loads(data.decode('utf-8'))
-                self.data_queue.put(csi_data)
-            except socket.timeout:
-                continue
-            except json.JSONDecodeError as e:
-                logging.warning(f"Ошибка декодирования JSON: {e}")
-            except Exception as e:
-                logging.error(f"Ошибка в UDP-сервере: {e}")
-
-        if self.sock:
-            self.sock.close()
-        logging.info("UDP CSI сервер остановлен")
-
-    def stop(self):
-        self.running = False
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=2.0)
+class CSIProtocol(asyncio.DatagramProtocol):
+    def __init__(self, callback):
+        self.callback = callback
+        
+    def datagram_received(self, data, addr):
+        try:
+            payload = json.loads(data.decode('utf-8'))
+            asyncio.create_task(self.callback(payload))
+        except json.JSONDecodeError:
+            logger.warning(f"Invalid JSON from {addr}")
+        except Exception as e:
+            logger.error(f"Error processing datagram: {e}")

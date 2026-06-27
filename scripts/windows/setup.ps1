@@ -123,7 +123,7 @@ for pkg in packages:
     Write-Host "============================================" -ForegroundColor Cyan
     Write-Host "  🚀 Для запуска проекта:" -ForegroundColor Green
     Write-Host "    .\venv\Scripts\Activate.ps1"
-    Write-Host "    python main.py"
+    Write-Host "    python -m src.main"
     Write-Host "============================================" -ForegroundColor Cyan
 }
 
